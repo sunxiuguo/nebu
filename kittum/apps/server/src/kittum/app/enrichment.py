@@ -22,6 +22,7 @@ from uuid import UUID
 
 from psycopg.types.json import Jsonb
 
+from kittum.app.privacy import ContactPrivacy
 from kittum.core import Clock, Id, NotFoundError, Record, new_id
 from kittum.corpus import latest_revision, propose_study_links, reports
 from kittum.enrich import (
@@ -507,6 +508,15 @@ def _carried(tx: Tx, run: dict[str, Any]) -> dict[Id, tuple[SourceFailure, ...]]
     }
 
 
+def _private_failure(failure: SourceFailure, privacy: ContactPrivacy) -> SourceFailure:
+    return failure.model_copy(
+        update={
+            "reason": privacy.text(failure.reason),
+            "message": privacy.text(failure.message) if failure.message is not None else None,
+        }
+    )
+
+
 def enrichment_handler(
     ctx: AppContext, gateway: Gateway, ledger: Ledger, queue: JobQueue
 ) -> Handler:
@@ -543,6 +553,20 @@ def enrichment_handler(
             # it waited writes nothing.
             chunk = tuple(records[start : start + CHUNK])
             result = lookup(chunk, gateway, config=config, carried=carried)
+            privacy = ContactPrivacy(config.contact_email)
+            result = result.model_copy(
+                update={
+                    "failures": tuple(_private_failure(f, privacy) for f in result.failures),
+                    "records": tuple(
+                        r.model_copy(
+                            update={
+                                "failures": tuple(_private_failure(f, privacy) for f in r.failures)
+                            }
+                        )
+                        for r in result.records
+                    ),
+                }
+            )
             with ctx.db.transaction() as tx:
                 queue.fence(tx, job)
                 tx.execute("select id from enrichment_run where id = %s for update", (run_id,))

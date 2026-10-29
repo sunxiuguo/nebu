@@ -13,13 +13,14 @@ screening judge, extraction runs, enrichment runs, and open-access retrieval.
 import functools
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
 from kittum.app.enrichment import ENRICHMENT_JOB, enrichment_handler
 from kittum.app.open_access import OPEN_ACCESS_JOB, open_access_handler
+from kittum.app.privacy import ContactGateway, ContactPrivacy, ContactTransport
 from kittum.core import Clock, KittumError, NotFoundError, SystemClock
 from kittum.db import Database
 from kittum.extraction import JOB_KIND as EXTRACTION_JOB
@@ -297,9 +298,11 @@ def build_gateway(
                 secrets=recording_secrets(settings),
             )
     in_memory = settings.offline or settings.gateway_record is not None
-    return SourceGateway(
+    privacy = ContactPrivacy(settings.contact_email)
+    return ContactGateway(
+        privacy=privacy,
         database=db,
-        transport=transport,
+        transport=ContactTransport(transport, privacy),
         buckets="memory" if settings.offline else "postgres",
         cache="memory" if in_memory else "postgres",
         artifacts=artifacts,
@@ -443,7 +446,22 @@ register_job_handler(OPEN_ACCESS_JOB, _source_jobs(open_access_handler, OPEN_ACC
 def job_handlers(ctx: AppContext) -> dict[str, Handler]:
     """Every registered job kind this context can run."""
     handlers = {kind: factory(ctx) for kind, factory in JOB_HANDLERS.items()}
-    return {kind: handler for kind, handler in handlers.items() if handler is not None}
+    privacy = ContactPrivacy(ctx.settings.contact_email)
+
+    def protect(handler: Handler) -> Handler:
+        guarded = privacy.guard(handler)
+
+        def run(job: Job, job_ctx: JobContext) -> JobOutput:
+            output = guarded(job, job_ctx)
+            return (
+                replace(output, publish=privacy.guard(output.publish))
+                if output.publish is not None
+                else output
+            )
+
+        return run
+
+    return {kind: protect(handler) for kind, handler in handlers.items() if handler is not None}
 
 
 __all__ = [

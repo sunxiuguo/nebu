@@ -1016,6 +1016,17 @@ Open:
   for good (they need requeueing by hand).
 - Full-text sentinels need a PDF each. The open-access waterfall skips Europe PMC's full-text
   XML: a document is a PDF, and there is no layer from JATS yet.
+- Issue #74: the configured contact is redacted from lookup audit URLs and diagnostics before
+  the retrieval/enrichment rows and ledger are written. The app gateway scopes HTTP/retry logging
+  to its own calls and cleans transport errors and error bodies before persistence or message
+  truncation; worker failures and publish callbacks get the same diagnostic protection.
+  Outgoing requests and successful source content stay unchanged. Lookup retries and restarted
+  workers rebuild their requests from current settings, without expanding audit placeholders.
+  Synthetic Postgres tests cover success, empty/malformed replies, redirects, errors, retries,
+  lease expiry, worker failures, signed bundles, and unrelated URL/content/log controls.
+  This addresses the demonstrated configured-contact lookup/diagnostic paths, not a generic
+  scrub/rebind policy for provider-returned file URLs or unconfigured personal `tool` values;
+  those remain open. Existing ledger history and signed bundles are not rewritten.
 - Writes (confirm, merge, split, render, seal) name their actor in the request body; only
   reports check that it is a lead.
 - `kittum serve` runs one uvicorn process; production needs a process manager and TLS in front.

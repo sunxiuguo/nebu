@@ -54,6 +54,7 @@ from kittum.app.lifecycle import (
     full_text,
     wrong_documents,
 )
+from kittum.app.privacy import ContactPrivacy
 from kittum.core import Clock, Id, NotFoundError, Record, canonical_doi, new_id
 from kittum.corpus import latest_revision, reports
 from kittum.documents import (
@@ -691,16 +692,21 @@ class _Report:
                 outcome = "other_work" if error.kind == "other_work" else "unavailable"
             else:
                 outcome = "found" if added else "known" if new else "none"
-            attempt: dict[str, Any] = {
-                "kind": "lookup",
-                "source": source,
-                "url": (found.url if found else error.url if error else None) or "",
-                "status": error.status if error else None,
-                "outcome": outcome,
-                "error": error.reason if error else None,
-                "message": error.message if error else None,
-                "found": len(added),
-            }
+            # Lookup URLs are audit data. A retry asks this source again with a request rebuilt
+            # from config; it never sends this redacted URL or expands its placeholder.
+            privacy = ContactPrivacy(self.config.contact_email)
+            attempt: dict[str, Any] = privacy.value(
+                {
+                    "kind": "lookup",
+                    "source": source,
+                    "url": (found.url if found else error.url if error else None) or "",
+                    "status": error.status if error else None,
+                    "outcome": outcome,
+                    "error": error.reason if error else None,
+                    "message": error.message if error else None,
+                    "found": len(added),
+                }
+            )
             self.ledger.append(
                 tx,
                 _event(
